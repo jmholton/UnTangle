@@ -1,6 +1,6 @@
 #! /bin/tcsh -f
 #
-#  throw every validation we can at it                          -James Holton 1-17-24
+#  throw every validation we can at it                          -James Holton 1-18-24
 #
 #  assemble an overall geometry score
 #  "energy" = (deviate/sigma)**2
@@ -39,7 +39,7 @@
 #
 #   nonbonds:  use Leonard-Jones to convert to energy [-1:inf], but dont let "worst" or avg be negative
 #
-#   omega twist: energy=((sin(omega)/0.07)**2+(1+cos(omega))**10)/(proxPRO*2+1)
+#   omega twist: energy=((sin(omega)/0.07)^2+(1+cos(omega))^10)/(proxPRO*2+1)
 #      where proxPRO means a neighboring residue is proline
 #
 #   allow "override" file    
@@ -313,7 +313,7 @@ awk '/nonbonded pdb=/{key="NONBOND";split($0,w,"\"");id1=w[2];\
        if(f==" ")f="_";if(c==" ")c="_";\
        nid=sprintf("%4s %s %4s %s %5s",a,f,t,c,r);\
        if(! /plane/){obs=$(NF-2);sigma=$(NF-1)};\
-       energy=(obs/sigma)**2;\
+       energy=(obs/sigma)^2;\
        print key,energy+0,ideal-obs,obs,ideal,sigma+0,"|",nid;\
        getline;}\
      }\
@@ -332,7 +332,7 @@ awk '/nonbonded pdb=/{key="NONBOND";split($0,w,"\"");id1=w[2];\
      ids=nid1; if(nid2~/[0-9]/)ids=ids" - "nid2; if(nid3~/[0-9]/)ids=ids" - "nid3;if(nid4~/[0-9]/)ids=ids" - "nid4;\
      print key,energy+0,ideal-obs,obs,ideal,sigma+0,"|",ids;\
      id1=id2=id3=id4=""} \
-   function lj0(r,r0) {if(r==0)return 1e40;return 4*((r0*2**(-1./6)/r)**12-(r0*2**(-1./6)/r)**6)}\
+   function lj0(r,r0) {if(r==0)return 1e40;return 4*((r0*2^(-1./6)/r)^12-(r0*2^(-1./6)/r)^6)}\
  function lj(r,r0) {return lj0(r,r0)-lj0(6,r0)}' |\
 sort -k2gr |\
 cat >! ${t}_fullgeo.txt
@@ -379,7 +379,7 @@ cat ${outprefix}_omegalyze.log |\
 awk -v modulo=$modulo -F ":" 'BEGIN{RTD=45/atan2(1,1)}\
    ! /^SUMMARY|^resid/{om=$3/RTD;\
    n=(substr($0,3,4)-1)%modulo+1;\
-   energy=(sin(om)/0.07)**2+(1+cos(om))**10;\
+   energy=(sin(om)/0.07)^2+(1+cos(om))^10;\
    print "OMEGA",energy,n,$0}' |\
 sort -k2gr >! ${t}_omegalyze.txt
 # OMEGA energy resnum%64 otherstuff
@@ -391,14 +391,14 @@ awk -v modulo=$modulo 'BEGIN{RTD=45/atan2(1,1)} \
   /isPRO/{isPRO[$2]=1;next}\
   /^TORS/ && $8=="CA" && $26=="CA"{n=($12-1)%modulo+1;om=$4/RTD;\
     proxPRO=isPRO[n-1]+isPRO[n+1];\
-    energy=((sin(om)/0.07)**2+(1+cos(om))**10)/(proxPRO*2+1);\
+    energy=((sin(om)/0.07)^2+(1+cos(om))^10)/(proxPRO*2+1);\
     print "OMEGA",energy,n,proxPRO,"omega=",om*RTD}' |\
 sort -k2gr >! ${t}_allomegas.txt
 
 
 # this is in Angstrom, assume "sigma" of 0.05 A
 cat ${outprefix}_cbetadev.log |\
- awk -v modulo=$modulo -F ":" '! /^SUMM|^pdb/{energy=($6/0.05)**2;\
+ awk -v modulo=$modulo -F ":" '! /^SUMM|^pdb/{energy=($6/0.05)^2;\
    n=($5-1)%modulo+1;\
    print "CBETADEV",energy,n,$0}' |\
 sort -k2gr >! ${t}_cbetadev.txt
@@ -439,7 +439,7 @@ tail -n 2 ${t}molprobity_coot.py |\
  awk 'length()==16{atoms=atoms"|"$0}\
  /^,/ && NF>1{r0=3;gsub(",","");r=r0+$1;\
   print "CLASH",lj(r,r0),-$1,atoms;atoms=""} \
-  function lj0(r,r0) {if(r==0)return 1e40;return 4*((r0*2**(-1./6)/r)**12-(r0*2**(-1./6)/r)**6)}\
+  function lj0(r,r0) {if(r==0)return 1e40;return 4*((r0*2^(-1./6)/r)^12-(r0*2^(-1./6)/r)^6)}\
   function lj(r,r0) {return lj0(r,r0)-lj0(6,r0)}' |\
 sort -k2gr >! ${outprefix}_clashes.txt
 # CLASH ljenergy deltadist "clash |" atoms1 "|" atoms2
@@ -482,7 +482,7 @@ if(-e "$overridefile" ) then
         }\
         print key,energy,delta,obs,ideal,sigma,"|",atms;next}\
      {print}\
-     function lj0(r,r0) {if(r==0)return 1e40;return 4*((r0*2**(-1./6)/r)**12-(r0*2**(-1./6)/r)**6)}\
+     function lj0(r,r0) {if(r==0)return 1e40;return 4*((r0*2^(-1./6)/r)^12-(r0*2^(-1./6)/r)^6)}\
      function lj(r,r0) {return lj0(r,r0)-lj0(6,r0)}' |\
      sort -k2gr >! ${t}_geo.txt
 
@@ -518,7 +518,7 @@ if(-e "$overridefile" ) then
         }\
         print key,energy,delta,obs,ideal,sigma,"|",atoms;next}\
      {print}\
-     function lj0(r,r0) {if(r==0)return 1e40;return 4*((r0*2**(-1./6)/r)**12-(r0*2**(-1./6)/r)**6)}\
+     function lj0(r,r0) {if(r==0)return 1e40;return 4*((r0*2^(-1./6)/r)^12-(r0*2^(-1./6)/r)^6)}\
      function lj(r,r0) {return lj0(r,r0)-lj0(6,r0)}' |\
      sort -k2gr >! ${t}_fullgeo.txt
 
@@ -650,7 +650,7 @@ awk '/^CBET/{print $0,"| CB_"$3}' ${t}_cbetadev.txt >! ${t}_worstcbetadev.txt
 # CLASH ljenergy deltadist "|" atoms1 "|" atoms2
 # multiply worst clash by number of clashes
 set nclashes = `cat ${outprefix}_clashes.txt | wc -l`
-set worst_clash = `awk -v n=$nclashes '{$1=n"x";print sqrt(1+$2*n)**2;print;exit}' ${outprefix}_clashes.txt`
+set worst_clash = `awk -v n=$nclashes '{$1=n"x";print sqrt(1+$2*n)^2;print;exit}' ${outprefix}_clashes.txt`
 if("$worst_clash" == "") set worst_clash = "no"
 # nclash*worst CLASH worstenergy nclash delta | atomid1 | atomid2
 
@@ -1322,7 +1322,7 @@ cat - ${t}movement.txt ${t}Rstats.txt ${t}Mstats.txt |\
 awk 'NR==1{energy=$1;next}\
     $NF=="d"{dxyz=$3;dB=$7;next}\
     $NF=="R"{Rw=$2;Rf=$3;bond=$7;ang=$9;vdw=$13;\
-       rE=((Rf-2.0)/2.0)**2;\
+       rE=((Rf-2.0)/2.0)^2;\
        rstats=$2" "$3" "$7" "$9" "$11" "$13;next}\
     $NF=="M"{Mp=$1;Cl=$2; score=rE+energy;\
     $NF="";\
