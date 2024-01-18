@@ -10,7 +10,7 @@ Challenge data set for multi-conformer macromolecular model building
 <H3 ALIGN=CENTER>May the Force Field Be Your Guide</H3>
 
 <CENTER><P>
-<HR><A HREF="animate.gif"><IMG SRC="animate.gif" width=640 height=480></A><p>
+<HR><A HREF="images/animate.gif"><IMG SRC="images/animate.gif" width=640 height=480></A><p>
 image not switching between "trapped" and "correct"? <a href=sidebyside.gif>click here</a>. 
 <br><small>Underlying data extend to 1.0 A resolution, blue map is 2mFo-DFc contoured at 1.0x rmsd, red and green are mFo-DFc contoured at 3.5 x rmsd.</small>
 
