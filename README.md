@@ -1,5 +1,3 @@
-# UnTangle
-Challenge data set for multi-conformer macromolecular model building
 <HTML>
 <HEAD>
 </HEAD>
@@ -9,7 +7,7 @@ Challenge data set for multi-conformer macromolecular model building
 <H3 ALIGN=CENTER>May the Force Field Be Your Guide</H3>
 
 <CENTER><P>
-<HR><A HREF="animate.gif"><img src=images/"animate.gif" width=640 height=480></A><p>
+<HR><A HREF="animate.gif"><img src=images/animate.gif width=640 height=480></A><p>
 image not switching between "trapped" and "correct"? <a href=sidebyside.gif>click here</a>. 
 <br><small>Underlying data extend to 1.0 A resolution, blue map is 2mFo-DFc contoured at 1.0x rmsd, red and green are mFo-DFc contoured at 3.5 x rmsd.</small>
 
@@ -221,7 +219,7 @@ Standard simulated annealing with Phenix in my hands will invariably knock more 
 <h2>What do you mean: tangled?</h2><p>
 
 I can't believe how many years it took me to notice this, but two or more atoms in the same blob of density have a really hard time passing through each other. This is because the calculated electron density at the moment the two atoms are on top of each other is up to twice as high and twice as sharp as it is when they are separated. This poor agreement with the observed density is a significant barrier to optimization. As you can see in this figure:<br>
-<img src=images/"Exray.gif" width=512><br>
+<img src=images/Exray.gif width=512><br>
 No matter what you call the two atoms: A and B, or B and A, together they will fit into oblong density. But, if you build A,B and the geometry term is better fro B,A then you are stuck. The density fit term of the optimization prevents them from crossing over. So, when you split a residue into two conformers, unless you get it right at that very moment, the refinement program is not going to be able to "figure it out" down the road. Sometimes weakening the density term with the <a href=#weightsnap>weight snap trick</a> can allow the barrier to be surmounted, and simulated annealing might get lucky. The <a href=#confswap>conformer swap trick</a> is an effective way to tunnel through the barrier, but there are a very large number of combinations of atoms to swap. Do you have any better ideas?<p>
 
 
