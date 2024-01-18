@@ -1,0 +1,9 @@
+refinement {
+  refine {
+    strategy = *individual_sites individual_sites_real_space rigid_body \
+               *individual_adp group_adp tls occupancies group_anomalous den
+    occupancies {
+      remove_selection = all
+    }
+  }
+}

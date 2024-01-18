@@ -1,0 +1,18 @@
+refinement {
+  pdb_interpretation {
+    reference_coordinate_restraints {
+      enabled = True
+      exclude_outliers = False
+      selection = water
+      sigma = 0.1
+    }
+  }
+  refine {
+    strategy = *individual_sites *individual_sites_real_space rigid_body \
+               *individual_adp group_adp tls occupancies group_anomalous den
+    occupancies {
+      remove_selection = All
+    }
+  }
+}
+
