@@ -1,9 +1,6 @@
 # UnTangle
 Challenge data set for multi-conformer macromolecular model building
 <HTML>
-<HEAD>
-   <TITLE>UNTANGLE challenge</TITLE>
-</HEAD>
 <BODY>
 
 <H1 ALIGN=CENTER>The UNTANGLE Challenge</H1>
