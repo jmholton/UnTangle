@@ -1,13 +1,15 @@
 # UnTangle
 Challenge data set for multi-conformer macromolecular model building
 <HTML>
+<HEAD>
+</HEAD>
 <BODY>
 
 <H1 ALIGN=CENTER>The UNTANGLE Challenge</H1>
 <H3 ALIGN=CENTER>May the Force Field Be Your Guide</H3>
 
 <CENTER><P>
-<HR><A HREF="images/animate.gif"><IMG SRC="images/animate.gif" width=640 height=480></A><p>
+<HR><A HREF="animate.gif"><IMG SRC="animate.gif" width=640 height=480></A><p>
 image not switching between "trapped" and "correct"? <a href=sidebyside.gif>click here</a>. 
 <br><small>Underlying data extend to 1.0 A resolution, blue map is 2mFo-DFc contoured at 1.0x rmsd, red and green are mFo-DFc contoured at 3.5 x rmsd.</small>
 
@@ -16,7 +18,7 @@ image not switching between "trapped" and "correct"? <a href=sidebyside.gif>clic
 
 <P>
 <h2>Why?</h2><p>
-Everybody knows that macromolecules adopt multiple conformations. That is how they function.  And yet, ensemble refinement has never been all that much better than conventional single-conformer-with-a-few-split-side-chain models when it comes to revealing correlated motions, or even just simultaneously satisfying density data and chemical restraints. That is, ensembles still suffer from the battle between R factors and geometry restraints. This is because the ensemble member chains cannot pass through each other, and get tangled. The tangling comes from the density, not the chemistry. Refinement in refmac, shelxl, phenix, simulated annealing, qFit, and every feature of coot I've tried cannot untangle them. <p>
+Everybody knows that macromolecules adopt multiple conformations. That is how they function.  And yet, ensemble refinement has never been all that much better than conventional single-conformer-with-a-few-split-side-chain models when it comes to revealing correlated motions, or even just simultaneously satisfying density data and chemical restraints. That is, ensembles still suffer from the battle between R factors and geometry restraints. This is because the ensemble member chains cannot pass through each other, and get <a href=#tangle>tangled</a>. The tangling comes from the density, not the chemistry. Refinement in refmac, shelxl, phenix, simulated annealing, qFit, and every feature of coot I've tried cannot untangle them. <p>
 
 The good news is: knowledge of chemistry, combined with R factors, appears to be a powerful indicator of how close a model is to being untangled. What is really exciting is that the genuine, underlying ensemble is, by definition, not tangled. The true ensemble defines the density; it is not being fit to it. The more untangled a model gets the closer it comes to the true ensemble, with deviations from reasonable chemistry becoming easier and easier to detect. In the end, when all alternative hypotheses have been eliminated, the model must match the truth.<p>
 
@@ -137,26 +139,26 @@ If you have trouble running this script, please try re-running it, but add <tt>d
 
 <h4>How does it work?</h4>
   There are many validation metrics for macromolecular model quality, and they all have different units. Here I posit a combined, weighted energy (wE) score to combine and balance them so that trade-offs can be judged automatically. For bond, angle, plane, torsion and chiral center deviations, I extract a statistical potential from <tt>phenix.geometry_minimization</tt>. This energy is:<br>
-<img src=statE.gif height=48 alt="E=((model-ideal)/sigma)^2"><br>
+<img src=images/statE.gif height=48 alt="E=((model-ideal)/sigma)^2"><br>
 where the sigma (&sigma;) (taken from Phenix) is the rms deviation expected of the bond, angle, etc. <i>v<sub>0</sub></i> is the ideal value and <i>v</i> the value in the model. The ground truth here has no significant deviations from ideality. For non-bonded interactions, I use a <a href=https://en.wikipedia.org/wiki/Lennard-Jones_potential>Lennard-Jones 6-12 potential</a>, wich has a much stronger penalty for clashes than the 4th-power anti-bumping typically used in refinement. I also add an extra penalty for each <a href=http://molprobity.biochem.duke.edu/>Molprobity</a> clash. The ground truth here has no clashes. I further add an extra penalty for twisted peptide bonds (omega). The ground truth has no peptides twisted more than 9 deg. The probabilities output by <tt>molprobity.ramalyze</tt> and <tt>molprobity.rotalyze</tt> are converted into a sigma-scaled deviate and therefore energy using the <a href=https://en.wikipedia.org/wiki/Error_function#Inverse_functions>inverse error function</a>. The ground truth has three unpopular rotamers. <a href=https://pubmed.ncbi.nlm.nih.gov/12557186/>C-beta deviations</a> also contribute a statistical energy with a presumed sigma=0.05 A. In this way, all validation metrics are all converted into statistical energies, which are now on the same scale.<p>
 
 There is a problem, however, with statistical energies, and that is that they tolerate huge outliers in large systems. For example, the odds of a 6-sigma bond deviation occuring by chance are about 1 in 500,000,000. That basically never happens. And yet, if 36 1-sigma deviations can be reduced to zero by creating a 6-sigma deviate, a statistical energy considers that an even trade-off. That makes no sense to me, so I weight each energy by considering the probability that it could have occurred by random chance.  That is, 6-sigma deviates get a weight of 1.0, and all 1-sigma deviates get a weight near zero.  More precisely, I use a 
 <tt><a href=https://en.wikipedia.org/wiki/Chi-squared_test>&chi;<sup>2</sup> test</a></tt>
  for the average/sum of each energy type, and for the maximum-deviating outlier in each category I use the frequency of the largest Gaussian deviate that occurs in N trials:
-<br><img src=Pnn.gif height=64 alt="Pnn = erf(deviate/sigma/sqrt(2))^Nthings"><br>
+<br><img src=images/Pnn.gif height=64 alt="Pnn = erf(deviate/sigma/sqrt(2))^Nthings"><br>
 Where <tt>P<sub>nn</sub></tt> is the "probability its not noise", <tt>erf()</tt> is the integral over a normalized Gaussian, and <tt>N<sub>things</sub></tt> is the number of bonds, angles, etc in each category. 
 
 A few instructive examples of <tt>P<sub>nn</sub></tt> are warranted:<br>
  If there is only one bond, and it is deviating from ideality by 0.67x sigma, then that energy (<tt>0.67^2 = 0.45</tt>) gets a weight of 0.5, for a total wE contribution of <tt>0.45*0.5 = 0.22</tt>. But, if 0.67-sigma is the worst of two bonds, that gets a weight of 0.25. If it is the worst of 5, then the weight is 3%, and if 0.67-sigma is the worst outlier of 10 bonds, that gets a weight of 0.1%. On the other hand, a 4-sigma outlier gets a weight of 1.0 unless there are quite a few other bonds. If there are 10,000 bonds, you expect to see a random biggest-deviate of 4 sigmas or more about 53% of the time.  So, 0.53 becomes the weight. The result is that wE tends to be dominated by the worst outliers, but random fluctuations of not-so-bad things cannot mask them.<p>
 One problem with <tt>P<sub>nn</sub></tt>, however, is that for large <tt>N<sub>things</sub></tt> it becomes very very sharp. Sharp enough that the uncertainty in the exact value of the sigma deviate itself can dominate a decision. To make <tt>P<sub>nn</sub></tt> reflect the finite precision of sigma deviates I replace <tt>P<sub>nn</sub></tt> in practice with a 5th-power polynomial that passes through the point where <tt>P<sub>nn</sub></tt>=50%. So, the sigma deviate that gets a weight of 0.5 is given by <tt>P<sub>nn</sub></tt>, but the overall curve is smooth.<br>
 Another problem with these energy-based weights is that very large outliers tends to wash out all other considerations. For example, a worst outlier going from 100 sigmas to 99 sigmas subtracts 199 energy "points", which is far more than the 7 "point" penalty of increasing a 3-sigma outlier to 4. This is not so bad in principle, but the problem is that real structures do contain actual outliers that are supported by the density, like the three rare rotamers in the ground truth of this challenge. Genuine outlers should not confound optimization of the 2nd-worst thing, so curtail this effect, all unweighted energies greater than 10 are replaced with a logarithmic dependence:
-<br><img src=clip.gif height=48 alt="E= E<10 ? E : 10+log(E)-log(10)"><br>
+<br><img src=images/clip.gif height=48 alt="E= E<10 ? E : 10+log(E)-log(10)"><br>
  This is a smooth and monotonic truncation that allows optimization in the context of outliers. The wE score can therefore be interpeted as 10x the number of potentially worrisome things in the structure.  The full equation for wE in each validation category is therefore:
-<br><img src=wE.gif height=48 alt="wE = chi^2*avg(E)+Pnn*clip(max(E))"><br>
+<br><img src=images/wE.gif height=48 alt="wE = chi^2*avg(E)+Pnn*clip(max(E))"><br>
 and the wE reported by the script is simply the sum over all categories: bonds, angles, torsions, planes, chirality, non-bond, rotamers, ramachandran angles, omega peptide bond twists,
 and CB-deviations.<br>
 Finally, for an overall Challenge score, R<sub>free</sub> must be considered. If you have gigantic difference features in your Fo-Fc map, then you have not arrived at the correct ensemble. Strictly speaking, <tt>P<sub>nn</sub></tt> and &chi;<sup>2</sup> could be used on difference map features, but for now I simply add a noise-offset energy derived from R<sub>free</sub> to wE to form a combined score:<br>
-<br><img src=score.gif height=52 alt="score = wE + ((Rfree-2)/2)^2"><br>
+<br><img src=images/score.gif height=52 alt="score = wE + ((Rfree-2)/2)^2"><br>
 
 Where &sigma;<sub>R</sub> is the R<sub>free</sub> expected due to  experimental error only. In the implementation here &sigma;<sub>R</sub> = 2%. Although algebraically unorthodox, the shape of this function approximately matches a &chi;<sup>2</sup>-weighted R<sub>free</sub>, in practice it serves only to penalize structures that have not been fully built into density.
 
@@ -214,9 +216,18 @@ The Alphafold2 prediction of this sequence has no strained rotamers.
 Standard simulated annealing with Phenix in my hands will invariably knock more atoms into the wrong place than it does into the right place. Even starting with the ground truth, wE never dipped much below 40, and the median wE was 172.  Simulated annealing with back-crossing, however was more effective, albeit pushing the model into a configuration that might be even harder to escape from.
 <p>
 
+<hr>
+<a name=tangle></a>
+<h2>What do you mean: tangled?</h2><p>
+
+I can't believe how many years it took me to notice this, but two or more atoms in the same blob of density have a really hard time passing through each other. This is because the calculated electron density at the moment the two atoms are on top of each other is up to twice as high and twice as sharp as it is when they are separated. This poor agreement with the observed density is a significant barrier to optimization. As you can see in this figure:<br>
+<IMG SRC="Exray.gif" width=512><br>
+No matter what you call the two atoms: A and B, or B and A, together they will fit into oblong density. But, if you build A,B and the geometry term is better fro B,A then you are stuck. The density fit term of the optimization prevents them from crossing over. So, when you split a residue into two conformers, unless you get it right at that very moment, the refinement program is not going to be able to "figure it out" down the road. Sometimes weakening the density term with the <a href=#weightsnap>weight snap trick</a> can allow the barrier to be surmounted, and simulated annealing might get lucky. The <a href=#confswap>conformer swap trick</a> is an effective way to tunnel through the barrier, but there are a very large number of combinations of atoms to swap. Do you have any better ideas?<p>
+
 
 <hr>
 
+<a name=data></a>
 <h2>Where did these data come from?</h2><p>
 
   The structure factors in <tt><a href=refme.mtz>refme.mtz</a></tt> were calculated form an idealized version of the structure in <tt><a href=http://www.rcsb.org/pdb/explore/explore.do?structureId=1aho>1aho</a></tt>.  This particular PDB entry was selected because it is small, making refinement and other tasks fast, high-resolution to maximize probability of success, it has at least one instance of all 20 amino acids, it has disulfide bonds, and nothing else unusual. The ground truth model here is an ensemble, but to keep this challenge as simple as possible it is an ensemble of two.<br>
