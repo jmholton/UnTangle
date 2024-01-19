@@ -16,8 +16,7 @@ image not switching between "trapped" and "correct"? <a href=sidebyside.gif>clic
 
 <P>
 <h2>What is this?</h2><p>
-Structural biology would be far more powerful if we can get our models out of local minima, like this chain-crossing trap. If you can build a model that passes Level 10, you win
-<! a &dollar; 1,000 USD prize>!
+Structural biology would be far more powerful if we can get our models out of local minima, like this chain-crossing trap. If you can build a model that passes Level 10, you win!
 <p>
 
 <h2>Motivation</h2><p>
