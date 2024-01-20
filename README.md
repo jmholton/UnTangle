@@ -298,6 +298,8 @@ A hand-built 2-conformer model was refined loosely against the deposited 1aho da
 <p>
 In the ground truth of this challenge, there are exactly two copies of every atom, including the 79 waters. Protein occupancies are 50:50 and the waters are all 50% occupied or less to keep them from clashing in refmac. The bulk solvent is flat and generated using phenix.fmodel with <tt>k_sol=0.42 b_sol=45</tt> and otherwise default parameters. So, to match this in refmac you want to use <tt>solvent vdwprobe 1.1 ionprobe 1.1 rashrink 0.9</tt>, and for SHELXL you will want to import <tt><a href=solvent4shelx.fab>solvent4shelx.fab</a></tt> using the <tt>ABIN</tt> feature.
 <p>
+One detail to note: the ground truth model has hydrogens, but not all of them. Water molecules are just oxygen, and the often disordered OH hydrogens of Tyr, Thr and Ser are not included. The variable HE2 of HIS side chains is also not included. It is not cheating to leave these hydrogens out of your model.
+<p>
 Finally, Gaussian noise was added to the structure factors using the deposited <tt>SIGF</tt> values from the real <tt>1aho</tt> data as widths for the random number distributions. Reflections missing in the deposited data are also missing in the simulated data. The simulated data were then named <tt>F,SIGF</tt> in <tt><a href=refme.mtz>refme.mtz</a></tt>, and the uncorrupted phases included in both <tt>PHI/FOM</tt> and Hendrickson-Lattman coefficients. The noiseless structure factor amplitudes are also included under the label <tt>F0</tt>. You may use them, but it won't make much difference.
 <p>
 
