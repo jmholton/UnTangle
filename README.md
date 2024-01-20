@@ -281,9 +281,19 @@ The latest version of Phenix allows you to use Alphafold2 predictions in model b
 <a name=tangle></a>
 <h2>What do you mean: tangled?</h2><p>
 
+The tangling phenomenon in macromolecular ensemble refinement is analogous to these red and blue ropes.
+<br>
+<img src=images/rope.gif ><br>
+
+ If the ropes are the same length as the distance from floor to ceiling, then straight up-and-down is the global minimum of mechanical strain (left). If, however, the ropes take a different route, they form the simplest possible type of tangle (right). Escaping this trap cannot be acomplished with minimization (pulling on the ropes). Instead, the system must be re-built without the tangle. In the case of ropes, it is van der Waals forces that prevent the strands from passing through each other. In the case of atomic models, it is not van der Waals, but the density fit energy that keeps the chains from passing through each other.
+<p>
+
 I can't believe how many years it took me to notice this, but two or more atoms in the same blob of density have a really hard time passing through each other. This is because the calculated electron density at the moment the two atoms are on top of each other is up to twice as high and twice as sharp as it is when they are separated. This poor agreement with the observed density is a significant barrier to optimization. As you can see in this figure:<br>
-<img src=images/Exray.gif width=512><br>
-No matter what you call the two atoms: A and B, or B and A, together they will fit into oblong density. But, if you build A,B and the geometry term is better as B,A then you are stuck. The density fit term of the optimization prevents them from crossing over. So, when you split a residue into two conformers, unless you get the AB vs BA thing right at that very moment, the refinement program is not going to be able to "figure it out" down the road. Sometimes weakening the density term with the <a href=#weightsnap>weight snap trick</a> can allow the barrier to be surmounted, and simulated annealing might get lucky. The <a href=#confswap>conformer swap trick</a> is an effective way to tunnel through the barrier, but there are a very large number of combinations of atoms to swap. Do you have any better ideas?<p>
+<img src=images/Exray.gif><br>
+No matter what you call the two atoms: A and B, or B and A, together they will fit into oblong density. But, if you build A,B and the geometry term is better as B,A then you are stuck. The density fit term of the optimization prevents them from crossing over. So, when you split a residue into two conformers, unless you get the AB vs BA thing right at that very moment, the refinement program is not going to be able to "figure it out" down the road.
+<p>
+Sometimes weakening the density term with the <a href=#weightsnap>weight snap trick</a> can allow the barrier to be surmounted, and simulated annealing might get lucky. The <a href=#confswap>conformer swap trick</a> is an effective way to tunnel through the barrier, but there are a very large number of combinations of atoms to swap. Do you have any better ideas?
+<p>
 
 
 <hr>
