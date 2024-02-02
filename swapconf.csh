@@ -41,7 +41,7 @@ foreach Arg ( $* )
     else
       # no equal sign
       if("$arg" =~ *.pdb) then
-          set pdbfile = "$arg"
+          set pdbfile = "$Arg"
           continue
       endif
 
@@ -90,7 +90,7 @@ if("$resn" == "0") set resn = $res1
 if("$resn" == "") set resn = $res1
 
 if(! -e "$pdbfile") then
-   set BAD = "usage: $0 model.pdb A1-15 CA\n to swap CA conformers in residues numbered 1 to 15"
+   set BAD = "file $pdbfile does not exist\nusage: $0 model.pdb A1-15 CA\n to swap CA conformers in residues numbered 1 to 15"
    goto exit
 endif
 
