@@ -26,11 +26,11 @@ awk '{typ=substr($0,18,3);p=0}\
   p{print}' |\
 cat >! ${tempfile}flipped.pdb
 
-rmsd -v debug=1 ${tempfile}flippable.pdb $target |\
+rmsd.awk -v debug=1 ${tempfile}flippable.pdb $target |\
   awk '/moved/{c=substr($0,11,1);f=substr($0,6,1);r=substr($0,12,5);d=substr($0,25,9);\
      ssd[c" "f" "r]+=d*d}\
   END{for(cr in ssd)print cr,ssd[cr],"noflip"}' >! ${tempfile}noflip.txt
-rmsd -v debug=1 ${tempfile}flipped.pdb $target |\
+rmsd.awk -v debug=1 ${tempfile}flipped.pdb $target |\
 awk '/moved/{c=substr($0,11,1);f=substr($0,6,1);r=substr($0,12,5);d=substr($0,25,9);\
      ssd[c" "f" "r]+=d*d}\
   END{for(cr in ssd)print cr,ssd[cr],"flip"}' >! ${tempfile}flip.txt
@@ -59,7 +59,7 @@ awk '$NF=="flip"{c=$1;f=$2;r=$3;id=c" "f" "r;++flipme[id];next}\
  } {print}' |\
 cat >! $outfile
 
-rmsd $pdbfile $outfile
+rmsd.awk $pdbfile $outfile
 
 rm -f ${tempfile}*
 
