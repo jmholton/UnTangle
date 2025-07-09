@@ -37,7 +37,7 @@
 #
 #   cbetadev - use 0.05 A as "sigma"
 #
-#   nonbonds:  use Leonard-Jones to convert to energy [-1:inf], but dont let "worst" or avg be negative
+#   nonbonds:  use Lennard-Jones to convert to energy [-1:inf], but dont let "worst" or avg be negative
 #
 #   omega twist: energy=((sin(omega)/0.07)^2+(1+cos(omega))^10)/(proxPRO*2+1)
 #      where proxPRO means a neighboring residue is proline
@@ -48,6 +48,8 @@
 set pdbfile = ""
 set mtzfile = ""
 set outprefix = "-"
+
+set ciffiles = ""
 
 set rstfile = ""
 set topfile = ""
@@ -66,6 +68,11 @@ set ignore = ARGH
 set sigma_fudge = 3
 # flag to write out restraint files for reducing outliers
 set writefudge = 0
+
+# const_shrink_donor_acceptor override
+set csda = 0.6
+# sigma of omega
+set sigomega = 4.01398721805631
 
 # flag to debug things
 set debug = 0
@@ -97,6 +104,7 @@ foreach arg ( $* )
       # no equal sign
       if("$Key" =~ *.pdb) set pdbfile = "$Key"
       if("$Key" =~ *.rst7) set rstfile = "$Key"
+      if("$Key" =~ *.cif) set ciffiles = ( $ciffiles "$Key" )
       if("$key" == "pdbfile") set pdbfile = "$Val"
       if("$key" == "outprefix") set outprefix = "$Val"
       if("$key" == "topfile") set topfile = "$Val"
@@ -117,7 +125,7 @@ if( ! $test ) then
    goto exit
 endif
 # check for dependencies
-set test = `phenix.version | grep "PHENIX: " | grep -v "Command not found" |wc -l`
+set test = `phenix.version | grep -i "PHENIX: " | grep -v "Command not found" |wc -l`
 if( ! $test ) then
    set BAD = "need phenix installed"
    goto exit
@@ -208,16 +216,6 @@ if(! -s  ${t}Rstats.txt) then
   #   1   2  3  4   5  6   7       8     9        10     11         12       13   14       15
 endif
 
-set R_Rfree = `awk '/  R VALUE       |  FREE R VALUE   /{print $NF*100}' $pdbfile`
-if( $#R_Rfree == 2 ) then
-    echo "using R/Rfree from $pdbfile"
-    echo $R_Rfree |\
-    cat - ${t}Rstats.txt |\
-    awk 'NR==1{R=$1;Rf=$2;next} {$2=R;$3=Rf;print}' |\
-    cat >! ${t}.txt
-    mv ${t}.txt ${t}Rstats.txt
-endif
-
 if(-e "$rstfile" && ! -e "$pdbfile") then
     set pdbfile = ${t}rst.pdb
     if(! $?AMBERHOME) source /programs/amber/amber.csh
@@ -252,6 +250,17 @@ if( $test ) then
     set pdbfile = ${t}noxp.pdb
 endif
 
+set R_Rfree = `awk '/  R VALUE       |  FREE R VALUE   /{print $NF*100}' $pdbfile`
+if( $#R_Rfree == 2 ) then
+    echo "using R/Rfree from $pdbfile"
+    echo $R_Rfree |\
+    cat - ${t}Rstats.txt |\
+    awk 'NR==1{R=$1;Rf=$2;next} {$2=R;$3=Rf;print}' |\
+    cat >! ${t}.txt
+    mv ${t}.txt ${t}Rstats.txt
+endif
+
+
 
 #echo "phipsichi"
 #phipsichi.com $pdbfile >! ${outprefix}_phipsichi.log
@@ -270,15 +279,22 @@ echo "molprobity"
 set pwd = `pwd`
 cp $pdbfile $tmpdir/this.pdb
 ( cd $tmpdir ;\
-phenix.molprobity flip_symmetric_amino_acids=True \
+phenix.molprobity flip_symmetric_amino_acids=True $ciffiles \
     outliers_only=False output.probe_dots=False \
     output.coot=True this.pdb ) >&! ${outprefix}_molprobity.log
 cp ${tmpdir}/molprobity_coot.py ${t}molprobity_coot.py
 
 echo "geometry"
-phenix.geometry_minimization $pdbfile macro_cycles=0 \
+phenix.geometry_minimization $pdbfile $ciffiles macro_cycles=0 \
+  stop_for_unknowns=false \
+  const_shrink_donor_acceptor=$csda \
   output_file_name_prefix=${t} >! ${outprefix}_geom.log
 # logfile is "greatest hits" only
+
+if(! -e ${t}.geo) then
+  set BAD = "phenix.geometry_minimization failed"
+  goto exit
+endif
 
 # convert into more parsable format
 cat ${t}.geo |\
@@ -336,6 +352,7 @@ awk '/nonbonded pdb=/{key="NONBOND";split($0,w,"\"");id1=w[2];\
  function lj(r,r0) {return lj0(r,r0)-lj0(6,r0)}' |\
 sort -k2gr |\
 cat >! ${t}_fullgeo.txt
+# format: key energy dev obs ideal sigma | atominfo
 
 echo $ignore |\
 cat - ${t}_fullgeo.txt |\
@@ -376,10 +393,10 @@ sort -k2,2 -k3g >! ${t}sequence.txt
 
 # convert other logs to parsable forms
 cat ${outprefix}_omegalyze.log |\
-awk -v modulo=$modulo -F ":" 'BEGIN{RTD=45/atan2(1,1)}\
+awk -v modulo=$modulo -v sigomega=$sigomega  -F ":" 'BEGIN{RTD=45/atan2(1,1);sigom=sigomega/RTD}\
    ! /^SUMMARY|^resid/{om=$3/RTD;\
    n=(substr($0,3,4)-1)%modulo+1;\
-   energy=(sin(om)/0.07)^2+(1+cos(om))^10;\
+   energy=(sin(om)/sin(sigom))^2+(1+cos(om))^10;\
    print "OMEGA",energy,n,$0}' |\
 sort -k2gr >! ${t}_omegalyze.txt
 # OMEGA energy resnum%64 otherstuff
@@ -387,11 +404,11 @@ sort -k2gr >! ${t}_omegalyze.txt
 # convert all omegas separately, noting prolines, treat "sigma" as 4 deg
 awk '/PRO/{print "isPRO",$3}' ${t}sequence.txt |\
 cat - ${t}_fullgeo.txt |\
-awk -v modulo=$modulo 'BEGIN{RTD=45/atan2(1,1)} \
+awk -v modulo=$modulo -v sigomega=$sigomega 'BEGIN{RTD=45/atan2(1,1);sigom=sigomega/RTD} \
   /isPRO/{isPRO[$2]=1;next}\
   /^TORS/ && $8=="CA" && $26=="CA"{n=($12-1)%modulo+1;om=$4/RTD;\
     proxPRO=isPRO[n-1]+isPRO[n+1];\
-    energy=((sin(om)/0.07)^2+(1+cos(om))^10)/(proxPRO*2+1);\
+    energy=((sin(om)/sin(sigom))^2+(1+cos(om))^10)/(proxPRO*2+1);\
     print "OMEGA",energy,n,proxPRO,"omega=",om*RTD}' |\
 sort -k2gr >! ${t}_allomegas.txt
 
@@ -444,6 +461,7 @@ tail -n 2 ${t}molprobity_coot.py |\
 sort -k2gr >! ${outprefix}_clashes.txt
 # CLASH ljenergy deltadist "clash |" atoms1 "|" atoms2
 #rm -f molprobity_coot.py
+cp ${outprefix}_clashes.txt ${t}clashes.txt
 
 
 # make potential override list
@@ -681,13 +699,13 @@ if("$worst_CB" == "") set worst_CB = "n/d"
 # in addition to worsts, use average as part of score
 
 # average "energy" residuals
-set avg_bond    = `awk '/^BOND/ {++n;sum+=$2} END{print sum/n,n}' ${t}_geo.txt`
-set avg_nonbond = `awk '/^NONBOND/ && $2>0{++n;sum+=$2} END{print sum/n,n}' ${t}_geo.txt`
-set avg_full_nonbond = `awk '/^NONBOND/ {++n;sum+=$2} END{print sum/n,n}' ${t}_geo.txt`
-set avg_angle   = `awk '/^ANGLE/{++n;sum+=$2} END{print sum/n,n}' ${t}_geo.txt`
-set avg_torsion = `awk '/^TORS/ {++n;sum+=$2} END{print sum/n,n}' ${t}_geo.txt`
-set avg_chiral  = `awk '/^CHIR/ {++n;sum+=$2} END{print sum/n,n}' ${t}_geo.txt`
-set avg_plane   = `awk '/^PLANE/{++n;sum+=$2} END{print sum/n,n}' ${t}_geo.txt`
+set avg_bond    = `awk '/^BOND/ {++n;sum+=$2} END{if(n) print sum/n,n}' ${t}_geo.txt`
+set avg_nonbond = `awk '/^NONBOND/ && $2>0{++n;sum+=$2} END{if(n) print sum/n,n}' ${t}_geo.txt`
+set avg_full_nonbond = `awk '/^NONBOND/ {++n;sum+=$2} END{if(n) print sum/n,n}' ${t}_geo.txt`
+set avg_angle   = `awk '/^ANGLE/{++n;sum+=$2} END{if(n) print sum/n,n}' ${t}_geo.txt`
+set avg_torsion = `awk '/^TORS/ {++n;sum+=$2} END{if(n) print sum/n,n}' ${t}_geo.txt`
+set avg_chiral  = `awk '/^CHIR/ {++n;sum+=$2} END{if(n) print sum/n,n}' ${t}_geo.txt`
+set avg_plane   = `awk '/^PLANE/{++n;sum+=$2} END{if(n) print sum/n,n}' ${t}_geo.txt`
 
 set avg_omega = `awk '{sum+=$2;++n} END{if(n) print sum/n,n}' ${t}_allomegas.txt`
 set avg_rama  = `awk '{sum+=$2;++n} END{if(n) print sum/n,n}' ${t}_ramalyze.txt`
@@ -1021,6 +1039,7 @@ awk '/^select/{\
         "value",ideal,"sigma",sigma,"type 0";\
    };\
   }}' |\
+tee ${t}debump.txt |\
 awk '{gsub("altecode _","");gsub("chain _","");print}' |\
 egrep "^extern|^#extern" >! refmac_opts_debump.txt
 
@@ -1047,7 +1066,8 @@ awk -v s=$sigma_fudge '$2>s{print;\
    print "extern dist first chain",c1,"resi",r1,"atom",a1,"altecode",f1,\
       "seco chain",c2,"resi",r2,"atom",a2,"altecode",f2,\
       "value",ideal,"sigma",sigma,"type 0"}' |\
-awk '{gsub("altecode _","");print}' |\
+tee ${t}fixbond.txt |\
+awk '{gsub("altecode _","");gsub("chain _","");print}' |\
 egrep "^extern" >! refmac_opts_fixbond.txt
 
 
@@ -1076,7 +1096,8 @@ awk -v s=$sigma_fudge '$2>s{print;\
       "next chain",c2,"resi",r2,"atom",a2,"altecode",f2,\
       "next chain",c3,"resi",r3,"atom",a3,"altecode",f3,\
       "value",ideal,"sigma",sigma}' |\
-awk '{gsub("altecode _","");print}' |\
+tee ${t}fixang.txt |\
+awk '{gsub("altecode _","");gsub("chain _","");print}' |\
 egrep "^extern" >! refmac_opts_fixang.txt
 
 
@@ -1086,14 +1107,35 @@ egrep "^CBETA" ${t}_cbetadev.txt |\
 awk -v s=$sigma_fudge '$2>s{print;\
    n=split($0,w,":");\
    f=w[2];c=w[4];r=w[5];\
+   print "CBETA",f,c,r;}' |\
+cat - ${t}_fullgeo.txt |\
+awk '/^CBETA/{++cbdev[$2,$3,$4];next}\
+  /^ANGLE/ && $14=="CA" && $20=="CB" && cbdev[$15,$17,$18]{print}' |\
+awk '{i=index($0,"|");\
+   nxt=substr($0,i+1);\
+   i=index(nxt,"-");\
+   id1=substr(nxt,1,i-1);\
+   nxt=substr(nxt,i+1);i=index(nxt,"-");\
+   id2=substr(nxt,1,i-1);\
+   nxt=substr(nxt,i+1);i=index(nxt,"-");\
+   id3=substr(nxt,1);\
+   print "|"id1"|";\
+   print "|"id2"|";\
+   print "|"id3"|";\
+   split(id1,w);a1=w[1];f1=w[2];t1=w[3];c1=w[4];r1=w[5];\
+   split(id2,w);a2=w[1];f2=w[2];t2=w[3];c2=w[4];r2=w[5];\
+   split(id3,w);a3=w[1];f3=w[2];t3=w[3];c3=w[4];r3=w[5];\
+   gsub(" ","_",f1);gsub(" ","_",f2);gsub(" ","_",f3);gsub(" ","_",f4);\
+   gsub(" ","_",c1);gsub(" ","_",c2);gsub(" ","_",c3);gsub(" ","_",c4);\
    ideal=$5;sigma=$6;\
-   print "extern angle first chain",c,"resi",r,"atom",a,"altecode",f,\
-      "next chain",c,"resi",r,"atom",a,"altecode",f,\
-      "next chain",c,"resi",r,"atom",a,"altecode",f,\
+   print "extern angle first chain",c1,"resi",r1,"atom",a1,"altecode",f1,\
+      "next chain",c2,"resi",r2,"atom",a2,"altecode",f2,\
+      "next chain",c3,"resi",r3,"atom",a3,"altecode",f3,\
       "value",ideal,"sigma",sigma}' |\
-awk '{gsub("altecode _","");print}' |\
+tee ${t}fixCBdev.txt |\
+awk '{gsub("altecode _","");gsub("chain _","");print}' |\
 egrep "^extern" >! refmac_opts_fixCBdev.txt
-rm -f refmac_opts_fixCBdev.txt
+#rm -f refmac_opts_fixCBdev.txt
 
 
 
@@ -1126,7 +1168,8 @@ awk -v s=$sigma_fudge '$2>s{print;\
       "next chain",c3,"resi",r3,"atom",a3,"altecode",f3,\
       "next chain",c4,"resi",r4,"atom",a4,"altecode",f4,\
       "value",ideal,"sigma",sigma,"period 0"}' |\
-awk '{gsub("altecode _","");print}' |\
+tee ${t}fixtorsion.txt |\
+awk '{gsub("altecode _","");gsub("chain _","");print}' |\
 egrep "^extern" >! refmac_opts_fixtorsion.txt
 
 
@@ -1168,11 +1211,12 @@ awk '/^PLANE/ && NF>15{sigma=$3;\
      a=$i;f=$(i+1);c=$(i+2);r=$(i+3);\
      printf("next chain %s resi %s atom %s altecode %s ",c,r,a,f);}\
    print "sigma",sigma}' |\
+tee ${t}fixplanes.txt |\
 awk '{gsub("altecode _","");gsub("chain _","");gsub("plane next","plane first");print}' |\
 egrep "^extern" >! refmac_opts_fixplanes.txt
 
 
-cat refmac_opts_fixplanes.txt |\
+cat ${t}fixplanes.txt |\
 awk '/extern plane/{sigma=$NF;\
      print "    planarity {";\
      printf("      atom_selection = \"");\
@@ -1184,6 +1228,7 @@ awk '/extern plane/{sigma=$NF;\
      print "\"\n      sigma =",sigma;\
      print "    }";\
    }' |\
+awk '{gsub("and altid _","");gsub("and chain _","");print}' |\
 cat >! phenix_opts_fixplanes.txt
 
 
@@ -1202,10 +1247,11 @@ foreach suff ( declash debump )
    print "      sigma =",s;\
    print "      slack =",deadband;\
    print "    }";}' |\
+awk '{gsub("and altid _","");gsub("and chain _","");print}' |\
  cat >! phenix_opts_${suff}.txt
 end
 
-egrep "^extern" refmac_opts_fixang.txt |\
+egrep "^extern" ${t}fixang.txt |\
 awk '$2=="angle"{\
      c1=$5;r1=$7;a1=$9;f1=$11;\
      c2=$14;r2=$16;a2=$18;f2=$20;\
@@ -1221,9 +1267,10 @@ awk '$2=="angle"{\
    print "      sigma =",s;\
    print "    }";\
    }' |\
+awk '{gsub("and altid _","");gsub("and chain _","");print}' |\
 cat >! phenix_opts_fixangle.txt
 
-egrep "^extern" refmac_opts_fixtorsion.txt |\
+egrep "^extern" ${t}fixtorsion.txt |\
 awk '$2=="torsion"{\
      c1=$5;r1=$7;a1=$9;f1=$11;\
      c2=$14;r2=$16;a2=$18;f2=$20;\
@@ -1241,6 +1288,7 @@ awk '$2=="torsion"{\
    print "      sigma =",s;\
    print "    }";\
    }' |\
+awk '{gsub("and altid _","");gsub("and chain _","");print}' |\
 cat >! phenix_opts_fixtorsion.txt
 
 cat phenix_opts_*.txt |\

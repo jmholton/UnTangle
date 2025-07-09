@@ -6,6 +6,13 @@
 set pdbfile = "$1"
 set target = "$2"
 
+if(! -e "$pdbfile") then
+  cat << EOF
+usage: $0 wrongflips.pdb target.pdb
+EOF
+  exit 9
+endif
+
 set outfile = flipped.pdb
 set tempfile = tempfile_$$_
 
@@ -36,10 +43,11 @@ awk '/moved/{c=substr($0,11,1);f=substr($0,6,1);r=substr($0,12,5);d=substr($0,25
   END{for(cr in ssd)print cr,ssd[cr],"flip"}' >! ${tempfile}flip.txt
 
 sort -k4g ${tempfile}flip.txt ${tempfile}noflip.txt |\
-awk '! seen[$1,$2,$3]{print;++seen[$1,$2,$3]}' |\
+awk '{id=substr($0,1,9)} ! seen[id]{print;++seen[id]}' |\
 awk '$NF=="flip"{print}' |\
 cat - $pdbfile |\
-awk '$NF=="flip"{c=$1;f=$2;r=$3;id=c" "f" "r;++flipme[id];next}\
+awk '$NF=="flip"{c=substr($0,1,1);f=substr($0,3,1);r=substr($0,5,4)+0;\
+    id=c" "f" "r;++flipme[id];next}\
 ! /^ATOM|^HETAT/{print;next}\
  {c=substr($0,22,1);f=substr($0,17,1);r=substr($0,23,4)+0;typ=substr($0,18,3);\
   id=c" "f" "r}\
@@ -57,7 +65,8 @@ awk '$NF=="flip"{c=$1;f=$2;r=$3;id=c" "f" "r;++flipme[id];next}\
   atom=substr($0,12,5);gsub(" ","",atom);\
   Ee=substr(atom,1,1);$0=substr($0,1,77) Ee;\
  } {print}' |\
-cat >! $outfile
+cat >! ${tempfile}out
+mv ${tempfile}out $outfile
 
 rmsd.awk $pdbfile $outfile
 
