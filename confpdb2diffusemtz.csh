@@ -14,6 +14,8 @@ set Bsol = 40
 
 set outfile = sqrtIdiffuse.mtz
 
+set debug = 0
+
 set tempfile = /dev/shm/${USER}/temp_cp2d_$$_
 #set tempfile = ./tempfile_Bud_
 mkdir -p /dev/shm/${USER}
@@ -55,6 +57,8 @@ foreach Arg ( $* )
     if("$arg" == "debug") set debug = "1"
 end
 
+if( $debug && $tempfile =~ /dev/shm/* ) set tempfile = ./tempfile_cp2d_
+
 set t = "$tempfile"
 
 if(! -e "$pdbfile") then
@@ -88,6 +92,25 @@ echo "getting symops for $SG"
 awk -v SG=$SG '$4==SG{getline;while( /X/ ){print;getline}}' ${CLIBD}/symop.lib >! ${t}symops.txt
 
 
+unique hklout ${t}.mtz << EOF >! ${t}u.log
+LABOUT F=F SIGF=SIGF
+SYMM $SG
+RESO 9
+CELL 10 10 10 
+EOF
+rm -f ${t}.mtz >& /dev/null
+
+
+# extract the symmetry operators from the log file
+cat  ${t}u.log |\
+awk '/Reciprocal space symmetry/,/Data line/' |\
+awk '/positive/{pm="F+"} /negative/{pm="F-"}\
+     $1=="ISYM" && $NF!="ISYM"{for(i=2;i<=NF;i+=2) print $i,pm,$(i+1)}' |\
+grep "F+" >! ${t}symop_hkl.txt
+set rs_ops = `awk '{print NR}' ${t}symop_hkl.txt`
+
+
+
 set confs = `awk '/^ATOM|^HETAT/{print substr($0,17,1)}' $pdbfile | sort -u | sort `
 echo "found conformers: $confs"
 set ops = `awk '{print NR}' ${t}symops.txt`
@@ -99,45 +122,32 @@ echo "big cell: $bigcell"
 
 foreach conf ( $confs )
 
-echo $conf |\
-cat - $pdbfile |\
-awk 'NR==1{conf=$1;next}\
-  ! /^ATOM|^HETAT/{next}\
-  {c=substr($0,17,1)}\
-  c==conf{print}' >! ${t}asu_${conf}.pdb
+  echo $conf |\
+  cat - $pdbfile |\
+  awk 'NR==1{conf=$1;next}\
+    ! /^ATOM|^HETAT/{next}\
+    {c=substr($0,17,1)}\
+    c==conf || c==" "{print}' >! ${t}asu_${conf}.pdb
 
-foreach op ( $ops )
-
-set xyzop = `head -n $op ${t}symops.txt | tail -n 1`
-
-echo "applying $xyzop in small cell to conf $conf"
-pdbset xyzin ${t}asu_${conf}.pdb xyzout ${t}symgen_${conf}_${op}.pdb << EOF >> $logfile
-CELL $CELL
-symgen $xyzop
+  pdbset xyzin ${t}asu_${conf}.pdb xyzout ${t}sfallme.pdb << EOF >> $logfile
+  cell $bigcell
+  SPACE 1
 EOF
 
-pdbset xyzin ${t}symgen_${conf}_${op}.pdb xyzout ${t}sfallme.pdb << EOF >> $logfile
-cell $bigcell
-SPACE 1
-EOF
-
-echo "fmodel"
-rm -f ${t}symgen_${conf}_${op}.mtz
-phenix.fmodel high_resolution=$reso ${t}sfallme.pdb \
-   k_sol=$ksol b_sol=$Bsol \
-   output.file_name=${t}symgen_${conf}_${op}.mtz >> $logfile
+  echo "fmodel conf $conf"
+  rm -f ${t}asu_${conf}_1.mtz
+  phenix.fmodel high_resolution=$reso ${t}sfallme.pdb \
+     k_sol=$ksol b_sol=$Bsol \
+     output.file_name=${t}asu_${conf}.mtz >> $logfile
 
 end
-end
 
-foreach op ( $ops )
+echo "calculating Idiff = (FA^2+FB^2)/2 - ((FA+FB)/2)^2"
 
-echo "calculating FA^2+FB^2 vs (FA+FB)^2 for op $op"
-
-rm -f ${t}diffuse_${op}.mtz
+rm -f ${t}diffuse_1.mtz
 sftools << EOF >> $logfile
-read ${t}symgen_${confs[1]}_${op}.mtz
-read ${t}symgen_${confs[2]}_${op}.mtz
+read ${t}asu_${confs[1]}.mtz
+read ${t}asu_${confs[2]}.mtz
 set labels
 F1
 P1
@@ -151,12 +161,31 @@ calc COL I2 = COL F2 COL F2 *
 calc COL Isum = COL I1 COL I2 +
 calc COL Iavg = COL Isum 2 /
 calc COL Idiff = COL Iavg COL Favgsq -
-write ${t}diffuse_${op}.mtz col Idiff Favg Iavg
+#write ${t}diffuse_1.mtz col Idiff Favg Iavg
+write ${t}diffuse_1.mtz col Idiff
 quit
 y
 EOF
 
+
+foreach op ( $rs_ops )
+
+if( $op == 1 ) then
+  continue
+endif
+
+set hklop = `head -n $op ${t}symop_hkl.txt | tail -n 1 | awk '{print $NF}'`
+
+echo "applying $hklop"
+echo reindex $hklop | reindex hklin ${t}diffuse_1.mtz hklout ${t}diffuse_${op}.mtz >> $logfile
+#cad hklin1 ${t}reindexed.mtz hklout ${t}diffuse_${op}.mtz << EOF >> $logfile
+#labin file 1 all
+#EOF
+
 end
+
+foreach op ( $ops )
+
 
 echo "adding up..."
 rm -f ${t}diffuse.mtz
@@ -198,7 +227,7 @@ mv ${t}sqrt.mtz ${outfile}
 
 exit:
 
-if( "${tempfile}" != "" && "${tempfile}" != "./" ) then
+if( ! $debug && "${tempfile}" != "" && "${tempfile}" != "./" ) then
   rm -f ${tempfile}* >& /dev/null
 endif
 
