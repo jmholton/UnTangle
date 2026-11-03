@@ -10,6 +10,42 @@
 #  Other absolute paths (1aho data, amber.old/1aho_refine helpers, ccp4) are unchanged.  The paper's LGD runs used phenix 1.21rc1;
 #  note that a login .cshrc that sources a phenix_env can override the PATH this script inherits.
 #
+# changes 29 Oct 2026 (claude_numbers session; JH: "update errant copies ... add set path = ( `dirname $0` $path )",
+# "implement fixed-A/B frame at round 0", "implement escalation to larger fragments if single-atom move finder fails"):
+#  - set path = ( this script's own directory, absolute, $path ) after every other PATH change, and the per-round comparison
+#    calls this script itself (${mypath}/${myname}), not whatever compare_to_best_runme.com comes first on PATH;
+#  - phenix_bin=<dir> (default /programs/phenix-1.21rc1-4903/build/bin when it exists; phenix_bin=none to keep PATH as is):
+#    strips other phenix entries from PATH and puts this one first (the paper's LGD runs used 1.21rc1);
+#  - partition=<name> (default debug): srun partition; the pre-refinement now also runs through $srun, so its result does not
+#    depend on the host the driver was started on (29 Oct test: the head node bl831 gives a 0.004 A rms different pre-refined
+#    model than every refmac node, and that alone decided whether c-a-c fused Arg18 got trapped);
+#  - fixframe=1 (passed by the swap-down loop to every per-round comparison unless keepframe=0): the global A/B frame chosen
+#    in round 0 is kept.
+#    Round 0 picks it as before (RMSD among confsplit / flip2match / flip2matchBA, then needed-swap count AB vs BA); later rounds
+#    may still choose confsplit or flip2match (renaming only) but never flip2matchBA, and AB is forced. Before, a model with about
+#    half its atoms in each frame (phenix_ensemble) switched frame after move 1, and move 2 undid move 1;
+#  - number_of_needed_swaps.txt is cleared before each comparison (the engine appends; the old AB decision took the minimum over
+#    all rounds so far);
+#  - pullin=1 (default): when no single-atom A/B relabel is needed but the model has not arrived (a heavy, non-water atom more than
+#    arrive_tol = 0.25 A from the target after renaming flips), make a pull-in move: put the worst atom (then larger fragments)
+#    at the target position, hold it through the lo and hi jobs, refine as for a swap, compare again. If the same atom is still
+#    the worst afterwards, escalate: atom -> side chain (this altloc) -> residue (this altloc) -> residue (both altlocs) ->
+#    residues i-1..i+1 -> i-2..i+2 -> every off atom -> stuck. Productive pull-in moves are counted separately from swaps;
+#  - the end of the run reports arrived (maxD) or stuck (atoms still off), not just "all done".
+#
+# changes 30 Oct 2026 (claude_numbers session; JH: "make always_hold apply to every lucky guess move. should be no repeats"):
+#  - holdall=1 (default; holdall=0 = the 29 Oct behaviour): every atom a move fixes goes on always_hold.txt, i.e. after each
+#    swap move, the swapped atoms that no longer need a swap, and after each pull-in move, the pulled heavy atoms. Held atoms
+#    are restrained (reference coordinates, sigma 0.01 A) in every later lo and hi job; the normal refinement of each round
+#    stays unrestrained, as before;
+#  - a held atom is never chosen as a move again: the move is the top of needed_swaps.txt minus always_hold.txt
+#    (needed_new.txt). A held atom that is mislabelled again is re-swapped with the next move without being counted (as the
+#    July always_hold did), and logged in silent_reswaps.txt; when only held atoms need a swap, a re-swap round runs on its own
+#    (not counted; more than 3 in a row = out of ideas). A pull-in of an atom pulled before is not counted either (re-pull);
+#  - the July promotion of struggling atoms to always_hold is off under holdall (an atom whose move never worked would then
+#    be re-swapped silently every round instead of escalating);
+#  - moves.txt: one line per round (round, kind, counted or not, atoms), so repeats can be checked.
+#
 #
 # check a provided model against the right answer
 #
@@ -25,6 +61,13 @@ set molprobify = 1
 set gt_water = 1
 set srun = "srun -p debug"
 set debug = 0
+set partition = debug
+set phenix_bin = /programs/phenix-1.21rc1-4903/build/bin
+set fixframe = 0
+set keepframe = 1
+set pullin = 1
+set arrive_tol = 0.25
+set holdall = 1
 
 # read the command line to update variables and other settings
 foreach Arg ( $* )
@@ -58,6 +101,14 @@ if(! -e "$pdbfile") then
     goto exit
 endif
 
+set srun = "srun -p $partition"
+if( "$phenix_bin" != "none" && -d "$phenix_bin" ) then
+  setenv PATH `echo $PATH | tr ':' '\n' | grep -v phenix | tr '\n' ':'`
+  setenv PATH ${phenix_bin}:${PATH}
+  unsetenv PHENIX PHENIX_PREFIX PHENIX_VERSION
+  rehash
+endif
+
 cat << EOF
 pdbfile = $pdbfile
 weight_snap = $weight_snap
@@ -65,13 +116,24 @@ fast = $fast
 swapdown = $swapdown
 gt_water = $gt_water
 debug = $debug
+partition = $partition
+fixframe = $fixframe
+keepframe = $keepframe
+pullin = $pullin
+arrive_tol = $arrive_tol
+holdall = $holdall
 EOF
 which phenix.refine
 
 
 set pdir = /home/jamesh/projects/build_challenge/1aho/
 set mypath = `dirname $0`
-setenv PATH ${mypath}:/home/jamesh/projects/amber.old/1aho_refine:${pdir}:${PATH}
+set mypath = `cd $mypath ; pwd`
+set myname = `basename $0`
+setenv PATH /home/jamesh/projects/amber.old/1aho_refine:${pdir}:${PATH}
+# this script's own directory goes first, so the helpers next to it (and this script itself) are the ones used
+set path = ( $mypath $path )
+echo "driver: ${mypath}/${myname}"
 set flipscript = flip_to_target_runme.com
 if( -x ${mypath}/flip_to_target.csh ) set flipscript = ${mypath}/flip_to_target.csh
 echo "flip script: `which $flipscript`"
@@ -210,6 +272,13 @@ echo ""
 
 egrep RMSD.all rmsd_*_vs_best.txt | sort -k2g | tee sorted.txt | awk -F ":" '{print $2,$1}'
 set prefix = `awk -F "_" '{print $2;exit}' sorted.txt | egrep -v "provided|gtHOH"`
+if( $fixframe ) then
+  # keep the global A/B frame chosen in round 0: renaming flips allowed, no global A<->B swap
+  grep -v flip2matchBA sorted.txt >! sorted_fixedframe.txt
+  set prefix = `awk -F "_" '{print $2;exit}' sorted_fixedframe.txt | egrep -v "provided|gtHOH"`
+  if( "$prefix" == "" ) set prefix = confsplit
+  echo "fixed frame: flip2matchBA not allowed"
+endif
 echo "selecting ${prefix}.pdb"
 cp ${prefix}.pdb completeme.pdb
 echo ""
@@ -293,7 +362,7 @@ if( $prerefine ) then
     echo "pre-refining with same options as good.pdb"
     set cyc = 10
     if( $fast > 1 ) set cyc = 1
-    phenix.refine opts.eff refme.mtz refme.pdb prefix=optref main.number_of_macro_cycles=$cyc >! phenix1.log
+    $srun phenix.refine opts.eff refme.mtz refme.pdb prefix=optref main.number_of_macro_cycles=$cyc >! phenix1.log
   endif
   set optrefpdbfile = optref_001.pdb
 else
@@ -321,6 +390,7 @@ if(! -x "$swapengine") then
   echo "build it with: gcc -O2 -o $swapengine ${swapengine}.c -lm"
   exit 9
 endif
+rm -f number_of_needed_swaps.txt
 $swapengine good.pdb BA AB
 
 # ----- original awk engine kept inline for reference (disabled) -----
@@ -423,6 +493,11 @@ endif
 # end of AB loop (original awk engine; replaced by $swapengine above)
 
 set AB = `sort -g number_of_needed_swaps.txt | awk '{print $2;exit}'`
+if( $fixframe ) then
+  cat number_of_needed_swaps.txt
+  set AB = AB
+  echo "fixed frame: AB kept"
+endif
 echo "decided on AB = $AB"
 cp sortme_${AB}.txt sortme.txt
 cp needed_swaps_${AB}.txt needed_swaps.txt
@@ -540,26 +615,65 @@ cp molprobify_bad.log molprobify_oaat_${swaps}.log
 
 set prev = ""
 echo -n "" >! needed_swaps_${prev}.txt
+echo -n "" >! needed_new_${prev}.txt
 
 # atoms whose swap required holdme.eff to secure (one-shot list);
 # any of those that reappear in needed_swaps.txt get promoted to always_hold
 # and are then swap-corrected + held in every subsequent refinement
+# (30 Oct: under holdall=1 every atom a move fixes goes on always_hold instead, and there is no promotion)
 if(! -e needs_holding.txt) then
    echo -n "" >! needs_holding.txt
 endif
 if(! -e always_hold.txt) then
    echo -n "" >! always_hold.txt
 endif
+if(! -e moves.txt) then
+   echo -n "" >! moves.txt
+endif
 
 set struggling = 0
 set movetype = one_atom
 set prev_movetype = $movetype
+set pullin_steps = 0
+set pull_level = 0
+set pull_prev = ""
+set stuck = 0
+set swaps_done = 0
+set reswap_only = 0
+set silent_reswaps = 0
+set repulls = 0
+
+movephase:
 while ( -s needed_swaps.txt )
+@ swaps_done = ( $swaps_done + 1 )
 
-cp needed_swaps.txt needed_swaps_${swaps}.txt 
+cp needed_swaps.txt needed_swaps_${swaps}.txt
 
-head -n 1 needed_swaps.txt | tee this_swap.txt
-set atomid = `awk '{print $2;exit}' needed_swaps.txt`
+# the move is chosen among the atoms not held yet (holdall); held atoms that need a swap again are re-swapped below, uncounted
+if( $holdall ) then
+   awk 'FILENAME==ARGV[1]{h[$1]=1;next} ! h[$2]' always_hold.txt needed_swaps.txt >! needed_new.txt
+else
+   cp needed_swaps.txt needed_new.txt
+endif
+cp needed_new.txt needed_new_${swaps}.txt
+set counted = 0
+
+if( ! -s needed_new.txt ) then
+   # only held atoms need a swap: re-swap them in a round of their own, not counted
+   @ reswap_only = ( $reswap_only + 1 )
+   echo "only held atoms need a swap: re-swap round $reswap_only (not counted):" `awk '{print $2}' needed_swaps.txt`
+   if( $reswap_only > 3 ) then
+      echo "held atoms keep reverting: out of ideas"
+      break
+   endif
+   echo -n "" >! this_swap.txt
+   set struggling = 0
+   set movetype = reswap
+   set prev_movetype = reswap
+else
+set reswap_only = 0
+head -n 1 needed_new.txt | tee this_swap.txt
+set atomid = `awk '{print $2;exit}' needed_new.txt`
 set atom = `echo $atomid | awk -F "_" '{print $1}'`
 set res = `echo $atomid | awk -F "_" '{print $2}'`
 set resnum = `echo $res | awk '{print substr($1,2)}'`
@@ -567,8 +681,8 @@ set chain = `echo $res | awk '{print substr($1,1,1)}'`
 set rigid = `echo $atom | awk '{print ( $1 ~ /[0-9]$/ || /CZ/ || /OH/ )}'`
 set partner = `awk '/^SSBOND/{print $4 $5,$7 $8}' good.pdb |  awk '{print ;print $2,$1}' | egrep "^$res" | awk '{print $2}' | sort -u`
 
-set this_atom = `awk '{print $2;exit}' needed_swaps.txt | sort`
-set prev_atom = `awk '{print $2;exit}' needed_swaps_${prev}.txt | sort`
+set this_atom = `awk '{print $2;exit}' needed_new.txt | sort`
+set prev_atom = `awk '{print $2;exit}' needed_new_${prev}.txt | sort`
 set prev_movetype = $movetype
 if( "$this_atom" == "$prev_atom" ) then
    echo "swap $swaps did not work for $prev_movetype "
@@ -615,45 +729,51 @@ else
    echo "not struggling"
    set struggling = 0
    @ productive_steps = ( $productive_steps + 1 )
+   set counted = 1
    set movetype = one_atom
    set prev_movetype = one_atom
 endif
 
 if( "$movetype" == "rigid_side" ) then
    echo "swapping rigid side chain of $res"
-   cat needed_swaps.txt |\
+   cat needed_new.txt |\
    awk 'NR==1{split($2,w,"_");res=w[2]}\
      $2~/[1-9]_/ && $2~ "_"res"$"{print}' | tee this_swap.txt
 endif
 if( "$movetype" == "whole_res" ) then
-    echo "swapping whole residue $res" 
-    egrep "_${res} " needed_swaps.txt | tee this_swap.txt
+    echo "swapping whole residue $res"
+    egrep "_${res} " needed_new.txt | tee this_swap.txt
 endif
 if( "$movetype" == "SSbond" ) then
-    echo "swapping whole disulfide: $res - $partner" 
-    egrep "_${res} |_${partner} " needed_swaps.txt | tee this_swap.txt
+    echo "swapping whole disulfide: $res - $partner"
+    egrep "_${res} |_${partner} " needed_new.txt | tee this_swap.txt
 endif
 if( "$movetype" == "top2" ) then
-    echo "swapping top 2 entries" 
-    head -n 2 needed_swaps.txt | tee this_swap.txt
+    echo "swapping top 2 entries"
+    head -n 2 needed_new.txt | tee this_swap.txt
 endif
 if( "$movetype" == "top3" ) then
-    echo "swapping top 3 entries" 
-    head -n 3 needed_swaps.txt | tee this_swap.txt
+    echo "swapping top 3 entries"
+    head -n 3 needed_new.txt | tee this_swap.txt
 endif
 if( "$movetype" == "all" ) then
     echo "swapping all entries"
-    cat needed_swaps.txt | tee this_swap.txt
+    cat needed_new.txt | tee this_swap.txt
 endif
+endif
+awk '/^SWAP/{print $2}' this_swap.txt >! _move_atoms.txt
+echo -n "" >! _reswap_now.txt
 
 # augment this_swap.txt with any always_hold atoms that are currently mis-labelled
 # (i.e. they appear in needed_swaps.txt) so they get swap-corrected this iteration
+# (30 Oct: FILENAME test instead of NR==FNR, which misreads an empty first file, as this_swap.txt is in a re-swap round)
 if( -s always_hold.txt ) then
    awk '/^SWAP/{print $2}' this_swap.txt >! _curr_swap_set.txt
-   awk 'NR==FNR{seen[$1]=1;next} ! seen[$1]' _curr_swap_set.txt always_hold.txt >! _ah_to_add.txt
+   awk 'FILENAME==ARGV[1]{seen[$1]=1;next} ! seen[$1]' _curr_swap_set.txt always_hold.txt >! _ah_to_add.txt
    if( -s _ah_to_add.txt ) then
-      awk 'NR==FNR{want[$1]=1;next} /^SWAP/ && want[$2]' _ah_to_add.txt needed_swaps.txt |\
-         tee -a this_swap.txt | awk '{print "always_hold re-swap:",$0}'
+      awk 'FILENAME==ARGV[1]{want[$1]=1;next} /^SWAP/ && want[$2]' _ah_to_add.txt needed_swaps.txt >! _reswap_now.txt
+      cat _reswap_now.txt >> this_swap.txt
+      awk '{print "always_hold re-swap:",$0}' _reswap_now.txt
    endif
    rm -f _curr_swap_set.txt _ah_to_add.txt
 endif
@@ -719,6 +839,15 @@ mv refme_Hfix.pdb refme.pdb
 
 set prev = "$swaps"
 set swaps = `echo $swaps | awk '{printf("%03d",$1+1)}'`
+# one line per round: round, move kind, counted (1) or not, the move's atoms, then any held atoms re-swapped with it
+set moved = `cat _move_atoms.txt`
+set reswapped = `awk '{print $2}' _reswap_now.txt`
+echo "$swaps swap $movetype counted=$counted move: $moved reswap: $reswapped" >> moves.txt
+if( -s _reswap_now.txt ) then
+   awk -v r=$swaps '{print r, $2}' _reswap_now.txt >> silent_reswaps.txt
+   set nre = `cat _reswap_now.txt | wc -l`
+   @ silent_reswaps = ( $silent_reswaps + $nre )
+endif
 
 
 set hold = ""
@@ -762,12 +891,23 @@ cp oaat_${swaps}.pdb swapme.pdb
 cp oaat_${swaps}.pdb optref_001.pdb
 
 echo "comparing to best again $swaps ..."
-compare_to_best_runme.com swapme.pdb prerefine=0 gt_water=$gt_water >&! compare_to_best_${swaps}.log
+${mypath}/${myname} swapme.pdb prerefine=0 gt_water=$gt_water fixframe=$keepframe partition=$partition phenix_bin=$phenix_bin molprobify=$molprobify >&! compare_to_best_${swaps}.log
 # updates lots of files
 
+# holdall: every atom this round swapped that no longer needs a swap is held from now on
+if( $holdall ) then
+   awk 'FILENAME==ARGV[1]{need[$2]=1;next} /^SWAP/ && ! need[$2]{print $2}' needed_swaps.txt this_swap.txt | sort -u >! _fixed.txt
+   if( -s _fixed.txt ) then
+      echo "holding from now on:" `cat _fixed.txt`
+      cat _fixed.txt always_hold.txt | sort -u >! _ah_new.txt
+      mv _ah_new.txt always_hold.txt
+   endif
+   rm -f _fixed.txt
+endif
+
 # any atom that previously needed hold and now reappears in needed_swaps.txt
-# is promoted to always_hold (permanent swap-correction + reference restraint)
-if( -s needs_holding.txt && -s needed_swaps.txt ) then
+# is promoted to always_hold (permanent swap-correction + reference restraint); not under holdall
+if( ! $holdall && -s needs_holding.txt && -s needed_swaps.txt ) then
    awk 'NR==FNR{want[$1]=1;next} /^SWAP/ && want[$2]{print $2}' \
        needs_holding.txt needed_swaps.txt | sort -u >! _promote.txt
    # only count atoms not already in always_hold
@@ -788,11 +928,202 @@ cp molprobify_bad.log molprobify_oaat_${swaps}.log
 
 end
 
+# ===== arrival test and pull-in moves (29 Oct 2026) =====
+# Reached when no single-atom A/B relabel is needed (or the swap escalation ran out of ideas).
+if( -s needed_swaps.txt ) goto finish
+
+# has the model arrived? heavy, non-water atoms vs the target, after renaming flips (X-ray-equivalent names)
+$flipscript swapme.pdb good.pdb >&! arrive_flip.log
+cp flipped.pdb arrive_model.pdb
+# symmetric names count as equivalent (as label_check_v2): the distance is to the nearer of the atom's own and its partner's
+# target position (Asp OD1/OD2, Glu OE1/OE2, Phe/Tyr CD1/CD2 CE1/CE2, Arg NH1/NH2, Val CG1/CG2, Leu CD1/CD2, His ring flip,
+# Asn OD1/ND2, Gln OE1/NE2, C-terminal O/OXT)
+awk -v tol=$arrive_tol 'BEGIN{n=split("ASP OD1 OD2 GLU OE1 OE2 PHE CD1 CD2 PHE CE1 CE2 TYR CD1 CD2 TYR CE1 CE2 ARG NH1 NH2 VAL CG1 CG2 LEU CD1 CD2 HIS ND1 CD2 HIS CE1 NE2 ASN OD1 ND2 GLN OE1 NE2",w);\
+    for(i=1;i<=n;i+=3){pt[w[i]" "w[i+1]]=w[i+2];pt[w[i]" "w[i+2]]=w[i+1]}}\
+  ! /^ATOM|^HETAT/{next} /HOH/{next}\
+  {name=substr($0,13,4);gsub(" ","",name);el=substr($0,77,2);gsub(" ","",el);rn=substr($0,18,3)}\
+  el=="H" || (el=="" && name ~ /^[0-9]*H/){next}\
+  {tail="_"substr($0,17,1)"_"substr($0,22,1)"_"(substr($0,23,4)+0);key=name tail;\
+   x=substr($0,31,8)+0;y=substr($0,39,8)+0;z=substr($0,47,8)+0}\
+  FNR==NR{gx[key]=x;gy[key]=y;gz[key]=z;next}\
+  (key in gx){d=sqrt((x-gx[key])^2+(y-gy[key])^2+(z-gz[key])^2);\
+   p=pt[rn" "name]; if(p=="" && name=="O")p="OXT"; if(p=="" && name=="OXT")p="O";\
+   if(p!="" && (p tail in gx)){d2=sqrt((x-gx[p tail])^2+(y-gy[p tail])^2+(z-gz[p tail])^2);if(d2<d)d=d2}\
+   ++n;if(d>max)max=d;if(d>tol)printf("%.3f %s %s\n",d,key,rn)}\
+  END{printf("%d %.3f\n",n,max) > "arrive_stats.txt"}' good.pdb arrive_model.pdb |\
+  sort -gr >! off_atoms.txt
+set arrive_maxd = `awk '{print $2}' arrive_stats.txt`
+set nheavy = `awk '{print $1}' arrive_stats.txt`
+set noff = `cat off_atoms.txt | wc -l`
+echo "arrival test: maxD $arrive_maxd A over $nheavy heavy atoms; $noff more than $arrive_tol A from the target"
+if( $noff == 0 ) goto finish
+head -n 10 off_atoms.txt
+if( ! $pullin ) goto finish
+
+# pull-in move: put the worst atom (or a larger fragment around it) at the target position
+set target = `awk '{print $2;exit}' off_atoms.txt`
+if(! -e pull_history.txt) touch pull_history.txt
+# an atom pulled before starts one level above the highest level already tried on it, so no atom can cycle forever
+set triedlevel = `awk -v t=$target '$1==t && $2>m{m=$2} END{print m+0}' pull_history.txt`
+set pcounted = 0
+if( "$target" == "$pull_prev" ) then
+   @ pull_level = ( $pull_level + 1 )
+   echo "pull-in of $target did not stick; escalating to level $pull_level"
+else
+   @ pull_level = ( $triedlevel + 1 )
+   set pcounted = 1
+   if( $holdall && $triedlevel > 0 ) set pcounted = 0
+   if( $pcounted ) then
+      set reswap_only = 0
+      @ pullin_steps = ( $pullin_steps + 1 )
+      if( $triedlevel > 0 ) echo "$target was pulled before (up to level $triedlevel); starting at level $pull_level"
+   else
+      @ repulls = ( $repulls + 1 )
+      echo "$target was pulled before (up to level $triedlevel): re-pull at level $pull_level, not counted (holdall)"
+   endif
+endif
+set pull_prev = "$target"
+
+pullselect:
+if( $pull_level > 7 ) then
+   echo "out of ideas for $target"
+   set stuck = 1
+   goto finish
+endif
+set levelname = ( atom sidechain residue residue_both residues3 residues5 all_off )
+echo "pull-in move: $target, level $pull_level ($levelname[$pull_level])"
+# Hbonds.txt lists BOND <heavy> <H> by atom name; off_atoms.txt lists every off heavy atom (level 7)
+cat Hbonds.txt off_atoms.txt arrive_model.pdb |\
+awk -v t=$target -v L=$pull_level 'BEGIN{split(t,w,"_");tn=w[1];ta=w[2];tc=w[3];tr=w[4]+0;\
+    n=split("ASP OD1 OD2 GLU OE1 OE2 PHE CD1 CD2 PHE CE1 CE2 TYR CD1 CD2 TYR CE1 CE2 ARG NH1 NH2 VAL CG1 CG2 LEU CD1 CD2 HIS ND1 CD2 HIS CE1 NE2 ASN OD1 ND2 GLN OE1 NE2",q);\
+    for(i=1;i<=n;i+=3){pt[q[i]" "q[i+1]]=q[i+2];pt[q[i]" "q[i+2]]=q[i+1]}\
+    bb["N"]=bb["CA"]=bb["C"]=bb["O"]=bb["OXT"]=bb["H"]=bb["H1"]=bb["H2"]=bb["H3"]=bb["HA"]=bb["HA2"]=bb["HA3"]=1}\
+  /^BOND/{par[$3]=par[$3]" "$2;next}\
+  NF==3 && $1+0>0 && $2 ~ /_/{off[$2]=1;next}\
+  ! /^ATOM|^HETAT/{next} /HOH/{next}\
+  {name=substr($0,13,4);gsub(" ","",name);a=substr($0,17,1);c=substr($0,22,1);r=substr($0,23,4)+0;\
+   el=substr($0,77,2);gsub(" ","",el);isH=(el=="H");\
+   heavy=name; if(isH){split(par[name],p);heavy="";for(i in p)if(p[i]!="")heavy=heavy" "p[i]}}\
+  {sel=0}\
+  L==1 && c==tc && r==tr && a==ta{ tp=pt[substr($0,18,3)" "tn]; if(tn=="O")tp="OXT"; if(tn=="OXT")tp="O";\
+     if(name==tn || (tp!="" && name==tp)) sel=1;\
+     if(isH && (index(" "heavy" "," "tn" ") || (tp!="" && index(" "heavy" "," "tp" ")))) sel=1 }\
+  L==2 && c==tc && r==tr && a==ta && ! bb[name]{sel=1}\
+  L==3 && c==tc && r==tr && a==ta{sel=1}\
+  L==4 && c==tc && r==tr{sel=1}\
+  L==5 && c==tc && r>=tr-1 && r<=tr+1{sel=1}\
+  L==6 && c==tc && r>=tr-2 && r<=tr+2{sel=1}\
+  L==7 && ! isH && off[name"_"a"_"c"_"r]{sel=1}\
+  L==7 && isH{n=split(heavy,h);for(i=1;i<=n;++i)if(off[h[i]"_"a"_"c"_"r])sel=1}\
+  sel{print}' >! pulled.pdb
+if( ! -s pulled.pdb ) then
+   echo "nothing to pull at level $pull_level (e.g. Gly side chain); next level"
+   @ pull_level = ( $pull_level + 1 )
+   goto pullselect
+endif
+echo "`grep -c . pulled.pdb` atoms pulled in"
+echo "$target $pull_level" >> pull_history.txt
+
+cp needed_swaps.txt needed_swaps_${swaps}.txt
+combine_pdbs_runme.com pulled.pdb good.pdb saveXYZ outfile=cheat.pdb > /dev/null
+combine_pdbs_runme.com cheat.pdb arrive_model.pdb keepref=1 outfile=refme.pdb > /dev/null
+fix_nterm_H.awk -v output=phenix refme.pdb >! refme_Hfix.pdb
+mv refme_Hfix.pdb refme.pdb
+
+# hold the pulled heavy atoms (and any always_hold atoms) through the lo and hi jobs
+cat << EOF >! holdme.eff    
+refinement {
+  main {
+    nqh_flips=False
+  }
+  modify_start_model {
+    modify {
+      flip_symmetric_amino_acids = False
+    }   
+  }
+  pdb_interpretation {
+    flip_symmetric_amino_acids = False
+    reference_coordinate_restraints {
+      enabled = True
+      exclude_outliers = False
+EOF
+( awk '{el=substr($0,77,2);gsub(" ","",el)} el!="H"{name=substr($0,13,4);gsub(" ","",name);\
+   print "(name " name " and resseq " substr($0,23,4)+0 " and chain " substr($0,22,1) " and altloc " substr($0,17,1) ")"}' pulled.pdb ;\
+  awk 'NF>0{split($1,w,"_");print "(name " w[1] " and resseq " substr(w[2],2) " and chain " substr(w[2],1,1) ")"}' always_hold.txt ) |\
+awk 'NF>0{sel=(sel=="")? $0 : sel " or " $0} END{if(sel!="") print "      selection = \"" sel "\""}' >> holdme.eff
+cat << EOF >> holdme.eff
+      sigma = 0.01
+      limit = 10
+    }
+  }
+}
+EOF
+
+set prev = "$swaps"
+set swaps = `echo $swaps | awk '{printf("%03d",$1+1)}'`
+cp holdme.eff holdme_${swaps}.eff
+( echo "PULLIN $target level $pull_level $levelname[$pull_level]" ; cat pulled.pdb ) >! pullin_${swaps}.txt
+echo "$swaps pullin level$pull_level counted=$pcounted move: $target" >> moves.txt
+
+set cyc = ""
+if( $fast ) set cyc = "main.number_of_macro_cycles=1"
+if ( $weight_snap ) then
+  echo "refine wxc_scale=0.05"
+  $srun phenix.refine refme.mtz opts.eff holdme.eff $cyc \
+    automatic_linking.amino_acid_bond_cutoff=2.5 \
+    automatic_linking.inter_residue_bond_cutoff=3.5 \
+    refme.pdb prefix=lo wxc_scale=0.05 >&! low_${swaps}.log 
+  cp lo_001.pdb refme.pdb
+  echo "refine wxc_scale=5"
+  $srun phenix.refine refme.mtz opts.eff holdme.eff $cyc refme.pdb prefix=hi wxc_scale=5 >&! high_${swaps}.log 
+  cp hi_001.pdb refme.pdb
+endif
+echo "refine normal"
+$srun phenix.refine refme.mtz opts.eff $cyc \
+    automatic_linking.amino_acid_bond_cutoff=2.5 \
+    automatic_linking.inter_residue_bond_cutoff=3.5 \
+ refme.pdb prefix=oaat serial=$swaps >&! oaat_${swaps}.log 
+
+cp oaat_${swaps}.pdb swapme.pdb
+cp oaat_${swaps}.pdb optref_001.pdb
+
+echo "comparing to best again $swaps (after pull-in) ..."
+${mypath}/${myname} swapme.pdb prerefine=0 gt_water=$gt_water fixframe=$keepframe partition=$partition phenix_bin=$phenix_bin molprobify=$molprobify >&! compare_to_best_${swaps}.log
+cp molprobify_bad.log molprobify_oaat_${swaps}.log
+# holdall: the pulled heavy atoms (both altlocs of each name, as always_hold selects) are held from now on
+if( $holdall ) then
+   awk '{el=substr($0,77,2);gsub(" ","",el)} el!="H"{name=substr($0,13,4);gsub(" ","",name);print name "_" substr($0,22,1) (substr($0,23,4)+0)}' pulled.pdb |\
+     sort -u >! _fixed.txt
+   echo "holding from now on:" `cat _fixed.txt`
+   cat _fixed.txt always_hold.txt | sort -u >! _ah_new.txt
+   mv _ah_new.txt always_hold.txt
+   rm -f _fixed.txt
+endif
+goto movephase
+
+finish:
 set test = `cat needed_swaps.txt | wc -l`
+@ total_steps = ( $productive_steps + $pullin_steps )
 echo "$test swaps remain"
 echo "$productive_steps productive moves in total"
+echo "$pullin_steps productive pull-in moves"
+echo "$total_steps productive moves including pull-ins"
+if( $holdall ) then
+  echo "holdall: `cat always_hold.txt | wc -l` atoms held; $silent_reswaps silent re-swaps of held atoms; $repulls re-pulls (not counted)"
+endif
+if( $test == 0 && ! $stuck && -e off_atoms.txt ) then
+  if( ! -s off_atoms.txt ) then
+    echo "arrived: maxD $arrive_maxd A"
+    echo "all done."
+    exit
+  endif
+endif
+if( -s off_atoms.txt ) then
+  echo "stuck: `cat off_atoms.txt | wc -l` atoms more than $arrive_tol A from the target:"
+  head -n 20 off_atoms.txt
+endif
 if( $test == 0 ) then
-  echo "all done."
+  echo "not done: no relabel left, but not at the target."
 else
   echo "not done. not sure what to do next."
 endif
